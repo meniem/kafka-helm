@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: data
+  namespace: kafka
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 5Gi
+  hostPath:
+    path: /data
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: data-claim
+  namespace: kafka
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 3Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zookeeper-config
+  namespace: kafka
+data:
+  ZK_ENSEMBLE: "zookeeper-0"
+  ZK_HEAP_SIZE: "512M"
+  ZK_TICK_TIME: "2000"
+  ZK_INIT_LIMIT: "10"
+  ZK_SYNC_LIMIT: "5"
+  ZK_MAX_CLIENT_CNXNS: "60"
+  ZK_SNAP_RETAIN_COUNT: "3"
+  ZK_PURGE_INTERVAL: "1"
+  ZK_CLIENT_PORT: "2181"
+  ZK_SERVER_PORT: "2888"
+  ZK_ELECTION_PORT: "3888"
+  ZK_REPLICAS: "1"
+---
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: zookeeper-budget
+  namespace: kafka
+spec:
+  selector:
+    matchLabels:
+      app: zookeeper
+  minAvailable: 2
+---  
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-svc
+  namespace: kafka
+  labels:
+    app: zookeeper-headless
+spec:
+  ports:
+  - port: 2888
+    name: server
+  - port: 3888
+    name: leader-election
+  clusterIP: None
+  selector:
+    app: zookeeper
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-headless
+  namespace: kafka
+  labels:
+    app: zookeeper-headless
+spec:
+  ports:
+  - port: 2181
+    name: client
+  selector:
+    app: zookeeper
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: kafka
+spec:
+  selector:
+    matchLabels:
+      app: zookeeper
+  serviceName: zookeeper-headless
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+      annotations:
+        pod.alpha.kubernetes.io/initialized: "true"
+    spec:
+      containers:
+      - name: k8szk
+        imagePullPolicy: Always
+        image: gcr.io/google_samples/k8szk:v3
+        ports:
+        - containerPort: 2181
+          name: client
+        - containerPort: 2888
+          name: server
+        - containerPort: 3888
+          name: leader-election
+        envFrom:
+          - configMapRef:
+              name: zookeeper-config
+        command:
+        - sh
+        - -c
+        - zkGenConfig.sh && zkServer.sh start-foreground
+        readinessProbe:
+          exec:
+            command:
+            - "zkOk.sh"
+          initialDelaySeconds: 15
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - "zkOk.sh"
+          initialDelaySeconds: 15
+          timeoutSeconds: 5
+        volumeMounts:
+        - name: zookeeper-storage
+          mountPath: /var/lib/zookeeper
+      volumes:
+          - name: zookeeper-storage
+            persistentVolumeClaim:
+              claimName: data-claim
+              

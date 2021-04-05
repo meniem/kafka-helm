@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kafka-data
+  namespace: kafka
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 5Gi
+  hostPath:
+    path: /data/kafka
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: kafka-data-claim
+  namespace: kafka
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 3Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-broker
+  namespace: kafka
+spec:
+  ports:
+  - port: 9092
+  # [podname].broker.kafka.svc.cluster.local
+  clusterIP: None
+  selector:
+    app: kafka
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: kafka
+spec:
+  selector:
+    matchLabels:
+      app: kafka
+  serviceName: "kafka-broker"
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: kafka
+      annotations:
+    spec:
+      serviceAccountName: kafka-sa
+      initContainers:
+      - name: init-config
+        image: solsson/kafka-initutils@sha256:c275d681019a0d8f01295dbd4a5bae3cfa945c8d0f7f685ae1f00f2579f08c7d
+        imagePullPolicy: Always
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command: ['/bin/bash', '/etc/kafka-configmap/init.sh']
+        volumeMounts:
+        - name: configmap
+          mountPath: /etc/kafka-configmap
+        - name: config
+          mountPath: /etc/kafka
+      containers:
+      - name: broker
+        image: solsson/kafka:latest
+        imagePullPolicy: Always
+        env:
+        - name: KAFKA_LOG4J_OPTS
+          value: -Dlog4j.configuration=file:/etc/kafka/log4j.properties
+        ports:
+        - containerPort: 9092
+        command:
+        - ./bin/kafka-server-start.sh
+        - /etc/kafka/server.properties
+        - --override
+        -   zookeeper.connect=zookeeper-svc.kafka.svc.cluster.local:2181
+        - --override
+        -   log.retention.hours=-1
+        - --override
+        -   log.dirs=/var/lib/kafka/data/topics
+        - --override
+        -   auto.create.topics.enable=false
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/kafka
+        - name: extensions
+          mountPath: /opt/kafka/libs/extensions
+        - name: kafka-storage
+          mountPath: /var/lib/kafka/data
+
+      volumes:
+      - name: configmap
+        configMap:
+          name: broker-config
+      - name: config
+        emptyDir: {}
+      - name: extensions
+        emptyDir: {}
+      - name: kafka-storage
+        persistentVolumeClaim:
+          claimName: kafka-data-claim

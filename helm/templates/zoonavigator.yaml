@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zoonavigator
+  namespace: kafka
+spec:
+  selector:
+    matchLabels:
+      run: zoonavigator
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        run: zoonavigator
+    spec:
+      containers:
+      - name: zoonavigator
+        image: elkozmon/zoonavigator:latest
+        env:
+        - name: HTTP_PORT
+          value: "9000"
+        ports:
+        - containerPort: 9000
+        resources:
+          requests:
+            cpu: 300m
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zoonavigator
+  namespace: kafka
+  labels:
+    run: zoonavigator
+spec:
+  ports:
+  - port: 9000
+  selector:
+    run: zoonavigator
+  type: NodePort
